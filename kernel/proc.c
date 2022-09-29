@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sysinfo.h"
 
 struct cpu cpus[NCPU];
 
@@ -274,6 +275,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  np->mask = p->mask;
 
   np->parent = p;
 
@@ -692,4 +694,31 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// count the number of unused process
+void unused_proc_count(struct sysinfo* s)
+{
+  struct proc *p;
+  int count = 0;
+  for (p = proc; p < &proc[NPROC]; p++)
+  {
+    if (p->state == UNUSED)
+      count++;
+  }
+  s->nproc = count;
+}
+
+//count available fds
+void avai_fd_count(struct sysinfo* s) {
+  int count=0;
+  struct proc *p = myproc();
+  for (int fd = 0; fd < NOFILE; fd++)
+  {
+    if (p->ofile[fd] == 0)
+    {
+      count++;
+    }
+  }
+  s->freefd = count;
 }
