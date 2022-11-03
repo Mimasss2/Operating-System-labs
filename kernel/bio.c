@@ -33,6 +33,7 @@ struct {
   // Sorted by how recently the buffer was used.
   // head.next is most recent, head.prev is least.
   struct buf head[NBUCKETS];
+  struct spinlock assign_lock;
 } bcache;
 
 void
@@ -58,6 +59,7 @@ binit(void)
     bcache.head[i].next = b;
     count++;
   }
+  initlock(&bcache.assign_lock,"bcache_assign_lock");
 }
 
 // Look through buffer cache for block on device dev.
@@ -84,6 +86,24 @@ bget(uint dev, uint blockno)
 
   // Not cached.
   // Recycle the least recently used (LRU) unused buffer.
+  // use assign_lock to ensure aotmic operation when allocating bcache block
+  release(&bcache.lock[key]);
+  acquire(&bcache.assign_lock);
+  acquire(&bcache.lock[key]);
+  // Is the block newly cached by another process?
+  for (b = bcache.head[key].next; b != &bcache.head[key]; b = b->next)
+  {
+    if (b->dev == dev && b->blockno == blockno)
+    {
+      b->refcnt++;
+      release(&bcache.lock[key]);
+      release(&bcache.assign_lock);
+      acquiresleep(&b->lock);
+      return b;
+    }
+  }
+
+  // acquire(&bcache.lock[key]);
   for (b = bcache.head[key].prev; b != &bcache.head[key]; b = b->prev)
   {
     if(b->refcnt == 0) {
@@ -91,7 +111,9 @@ bget(uint dev, uint blockno)
       b->blockno = blockno;
       b->valid = 0;
       b->refcnt = 1;
+      
       release(&bcache.lock[key]);
+      release(&bcache.assign_lock);
       acquiresleep(&b->lock);
       return b;
     }
@@ -115,6 +137,7 @@ bget(uint dev, uint blockno)
         // move to the designated bucket
         b->next->prev = b->prev;
         b->prev->next = b->next;
+        release(&bcache.lock[i]);
 
         acquire(&bcache.lock[key]);
         b->next = bcache.head[key].next;
@@ -122,9 +145,10 @@ bget(uint dev, uint blockno)
         bcache.head[key].next->prev = b;
         bcache.head[key].next = b;
         release(&bcache.lock[key]);
-
-        release(&bcache.lock[i]);
+        
+        release(&bcache.assign_lock);
         acquiresleep(&b->lock);
+        
         return b;
       }
     }
