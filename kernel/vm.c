@@ -450,3 +450,38 @@ test_pagetable()
   uint64 gsatp = MAKE_SATP(kernel_pagetable);
   return satp != gsatp;
 }
+
+void printPteInfo(pte_t pte, int level, int idx)
+{
+  printf("||");
+  for (int i = 0; i < level; i++)
+  {
+    printf(" ||");
+  }
+  printf("%d: pte %p pa %p\n", idx, pte, PTE2PA(pte));
+}
+
+void
+vmprint(pagetable_t pagetable, int level)
+{
+  if (level == 0) {
+    printf("page table %p\n", pagetable);
+  }
+  // there are 2^9 = 512 PTEs in a page table.
+  for (int i = 0; i < 512; i++)
+  {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) != 0)
+    {
+      printPteInfo(pte, level, i); 
+      if (level >= 2) {
+        continue;
+      }
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      vmprint((pagetable_t)child, level+1);
+    }
+  }
+  // exit(0); // 加了会提示‘panic: init exiting’，原因：init尚未执行完就调用了exit函数，错误退出了 
+}
+
