@@ -40,6 +40,8 @@ procinit(void)
       uint64 va = KSTACK((int) (p - proc));
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
       p->kstack = va;
+      // add kstack physical addr to pcb
+      p->kstack_pa = (uint64)pa;
   }
   kvminithart();
 }
@@ -121,6 +123,15 @@ found:
     return 0;
   }
 
+  // A kernel page table
+  p->k_pagetable = userkvminit();
+  if(p->k_pagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  userkvmmap(p->k_pagetable, p->kstack, p->kstack_pa, PGSIZE, PTE_R | PTE_W);
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -141,6 +152,10 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->k_pagetable) {
+    kpagetablefreewalk(p->k_pagetable, 0);
+  }
+  p->k_pagetable = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -473,6 +488,8 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // change kernel pagetable to the one in user process
+        kvmswitchhart(p->k_pagetable);
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
@@ -485,6 +502,7 @@ scheduler(void)
     }
 #if !defined (LAB_FS)
     if(found == 0) {
+      kvminithart(); // set the kernel pagetable to global kernel pagetable
       intr_on();
       asm volatile("wfi");
     }
