@@ -152,8 +152,12 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+
+  // kfree((void*)p->kstack_pa);
+  // p->kstack = 0;
+  // p->kstack_pa = 0;
   if(p->k_pagetable) {
-    kpagetablefreewalk(p->k_pagetable, 0);
+    kpagetablefreewalk(p->k_pagetable);
   }
   p->k_pagetable = 0;
   p->pagetable = 0;
@@ -235,6 +239,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  ukpagecopy(p->pagetable, p->k_pagetable, 0, p->sz, p->sz);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -261,8 +266,15 @@ growproc(int n)
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    if (ukpagecopy(p->pagetable, p->k_pagetable, p->sz, sz, sz) < 0) {
+      return -1;
+    }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    if (ukpagecopy(p->pagetable, p->k_pagetable, p->sz, p->sz, sz) < 0)
+    {
+      return -1;
+    }
   }
   p->sz = sz;
   return 0;
@@ -289,6 +301,11 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  if (ukpagecopy(np->pagetable, np->k_pagetable, 0, np->sz, np->sz) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   np->parent = p;
 
@@ -491,6 +508,7 @@ scheduler(void)
         // change kernel pagetable to the one in user process
         kvmswitchhart(p->k_pagetable);
         swtch(&c->context, &p->context);
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.

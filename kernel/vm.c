@@ -54,25 +54,18 @@ pagetable_t userkvminit()
 {
   pagetable_t k_pagetable = (pagetable_t)kalloc();
   memset(k_pagetable, 0, PGSIZE);
-
   // uart registers
   userkvmmap(k_pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
   // virtio mmio disk interface
   userkvmmap(k_pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
   // need to remove CLINT
-  // kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
-
+  // userkvmmap(k_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
   // PLIC
   userkvmmap(k_pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
-
   // map kernel text executable and read-only.
   userkvmmap(k_pagetable, KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
-
   // map kernel data and the physical RAM we'll make use of.
   userkvmmap(k_pagetable, (uint64)etext, (uint64)etext, PHYSTOP - (uint64)etext, PTE_R | PTE_W);
-
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   userkvmmap(k_pagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
@@ -342,20 +335,22 @@ freewalk(pagetable_t pagetable)
 
 // Recursively free page-table pages.
 // leaf pages are still kept
-void kpagetablefreewalk(pagetable_t pagetable, int level)
+void kpagetablefreewalk(pagetable_t pagetable)
 {
   // there are 2^9 = 512 PTEs in a page table.
   for (int i = 0; i < 512; i++)
   {
     pte_t pte = pagetable[i];
-    if (level < 2)
+    if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0)
     {
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
-      if(child != 0) {
-        kpagetablefreewalk((pagetable_t)child, level+1);
+      kpagetablefreewalk((pagetable_t)child);
       pagetable[i] = 0;
-      }
+    }
+    else if (pte & PTE_V)
+    {
+      pagetable[i] = 0;
     }
   }
   kfree((void *)pagetable);
@@ -452,23 +447,27 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
+  // uint64 n, va0, pa0;
 
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+  // while(len > 0){
+  //   va0 = PGROUNDDOWN(srcva);
+  //   pa0 = walkaddr(pagetable, va0);
+  //   if(pa0 == 0)
+  //     return -1;
+  //   n = PGSIZE - (srcva - va0);
+  //   if(n > len)
+  //     n = len;
+  //   memmove(dst, (void *)(pa0 + (srcva - va0)), n);
 
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+  //   len -= n;
+  //   dst += n;
+  //   srcva = va0 + PGSIZE;
+  // }
+  // return 0;
+  // w_sstatus(r_sstatus() | SSTATUS_SUM);
+  // int res = copyin_new(pagetable, dst, srcva, len);
+  // w_sstatus(r_sstatus() & ~SSTATUS_SUM);
+  return copyin_new(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -478,40 +477,41 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
+  // uint64 n, va0, pa0;
+  // int got_null = 0;
 
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
+  // while(got_null == 0 && max > 0){
+  //   va0 = PGROUNDDOWN(srcva);
+  //   pa0 = walkaddr(pagetable, va0);
+  //   if(pa0 == 0)
+  //     return -1;
+  //   n = PGSIZE - (srcva - va0);
+  //   if(n > max)
+  //     n = max;
 
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
+  //   char *p = (char *) (pa0 + (srcva - va0));
+  //   while(n > 0){
+  //     if(*p == '\0'){
+  //       *dst = '\0';
+  //       got_null = 1;
+  //       break;
+  //     } else {
+  //       *dst = *p;
+  //     }
+  //     --n;
+  //     --max;
+  //     p++;
+  //     dst++;
+  //   }
 
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
-  }
+  //   srcva = va0 + PGSIZE;
+  // }
+  // if(got_null){
+  //   return 0;
+  // } else {
+  //   return -1;
+  // }
+  return copyinstr_new(pagetable, dst, srcva, max);
 }
 
 // check if use global kpgtbl or not 
@@ -557,3 +557,30 @@ vmprint(pagetable_t pagetable, int level)
   // exit(0); // 加了会提示‘panic: init exiting’，原因：init尚未执行完就调用了exit函数，错误退出了 
 }
 
+int
+ukpagecopy(pagetable_t u, pagetable_t k, uint64 start, uint64 end, uint64 end_clear) {
+  if(start > end || PGROUNDUP(end_clear) >= PLIC || PGROUNDUP(end) >=PLIC) {
+    return -1;
+  }
+  
+  pte_t *u_pte, *k_pte;
+  uint64  i;
+  for (i=PGROUNDDOWN(start); i< end; i=i+PGSIZE) {
+    if ((u_pte = walk(u, i, 0)) == 0)
+      panic("ukpagecopy: pte should exist");
+    if ((*u_pte & PTE_V) == 0)
+      panic("ukpagecopy: page not present");
+    if ((k_pte = walk(k, i, 1)) == 0)
+      panic("ukpagecopy: kernel pte allocate failure");
+    *k_pte = *u_pte & (~PTE_U);
+  }
+
+  // unmap 
+  for(i= PGROUNDUP(end); i < end_clear; i+=PGSIZE) {
+    if ((k_pte = walk(k, i, 0)) == 0)
+      panic("ukpagecopy: kernel pte should exist");
+    *k_pte = 0;
+  }
+
+  return 0;
+}
